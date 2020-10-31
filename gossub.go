@@ -1,114 +1,81 @@
 package gossub
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"path"
+	"runtime"
+)
+
+const (
+	SPARK_MASTER                  = "spark.master"
+	DEPLOY_MODE                   = "spark.submit.deployMode"
+	DRIVER_MEMORY                 = "spark.driver.memory"
+	DRIVER_EXTRA_CLASSPATH        = "spark.driver.extraClassPath"
+	DRIVER_DEFAULT_JAVA_OPTIONS   = "spark.driver.defaultJavaOptions"
+	DRIVER_EXTRA_JAVA_OPTIONS     = "spark.driver.extraJavaOptions"
+	DRIVER_EXTRA_LIBRARY_PATH     = "spark.driver.extraLibraryPath"
+	EXECUTOR_MEMORY               = "spark.executor.memory"
+	EXECUTOR_EXTRA_CLASSPATH      = "spark.executor.extraClassPath"
+	EXECUTOR_DEFAULT_JAVA_OPTIONS = "spark.executor.defaultJavaOptions"
+	EXECUTOR_EXTRA_JAVA_OPTIONS   = "spark.executor.extraJavaOptions"
+	EXECUTOR_EXTRA_LIBRARY_PATH   = "spark.executor.extraLibraryPath"
+	EXECUTOR_CORES                = "spark.executor.cores"
+	PYSPARK_DRIVER_PYTHON         = "spark.pyspark.driver.python"
+	PYSPARK_PYTHON                = "spark.pyspark.python"
+	SPARKR_R_SHELL                = "spark.r.shell.command"
+	CHILD_PROCESS_LOGGER_NAME     = "spark.launcher.childProcLoggerName"
+	NO_RESOURCE                   = "spark-internal"
+	CHILD_CONNECTION_TIMEOUT      = "spark.launcher.childConectionTimeout"
 )
 
 type Launcher interface {
 	SetConfig(k, v string) *SparkLauncher
-	SetJavaHome(javaHome string) *SparkLauncher
-	SetSparkHome(sparkHome string) *SparkLauncher
 	Directory(file os.File) *SparkLauncher
-	RedirectError(w *io.Writer) *SparkLauncher
-	RedirectOutput(w *io.Writer) *SparkLauncher
-	RedirectErrorToFile(file *os.File) *SparkLauncher
-	RedirectOutputToFile(file *os.File) *SparkLauncher
+	RedirectError(file *os.File)
+	RedirectOutput(file *os.File)
 	SetConf(k, v string) *SparkLauncher
-	SetAppName(appName string) *SparkLauncher
-	SetMaster(master string) *SparkLauncher
-	SetDeployMode(deployMode string) *SparkLauncher
-	SetAppResource(deployMode string) *SparkLauncher
-	SetMainClass(mainClass string) *SparkLauncher
 	AddSparkArgs(arg string) *SparkLauncher
-	AddJar(jar string) *SparkLauncher
-	AddPyFile(file string) *SparkLauncher
-	SetVerbose(verbose bool) *SparkLauncher
 	Launch() *os.Process
 }
 
 type SparkLauncher struct {
-	cmd         *exec.Cmd
-	conf        map[string]string
-	javaHome    string
-	sparkHome   string
-	pwd         string
-	appName     string
-	master      string
-	deployMode  string
-	appResource string
-	mainClass   string
-	sparkArgs   []string
-	jar         string
-	pyFile      string
-	verbose     bool
+	cmd       *exec.Cmd
+	conf      map[string]string
+	sparkArgs []string
+
+	JavaHome    string
+	SparkHome   string
+	Pwd         string
+	AppName     string
+	Master      string
+	DeployMode  string
+	AppResource string
+	MainClass   string
+	Jar         string
+	PyFile      string
+	Verbose     bool
 }
 
-func (sl *SparkLauncher) redirectOutput(w *io.Writer) *SparkLauncher {
-	if w == nil {
-		panic("nil *io.Writer passed")
-	}
-
-	sl.cmd.Stdout = *w
-	return sl
+func (sl *SparkLauncher) Init() {
+	sl.cmd = exec.Command(
+		sl.findSparkSubmit(),
+		"--class",
+		sl.MainClass,
+		sl.Jar,
+	)
 }
 
-func (sl *SparkLauncher) redirectError(w *io.Writer) *SparkLauncher {
-	if w == nil {
-		panic("nil *io.Writer passed")
-	}
-
-	sl.cmd.Stderr = *w
-	return sl
+func (sl *SparkLauncher) RedirectError(file *os.File) {
+	sl.cmd.Stderr = file
 }
 
-func (sl *SparkLauncher) RedirectError(w *io.Writer) *SparkLauncher {
-	return sl.redirectError(w)
-}
-
-func (sl *SparkLauncher) RedirectOutput(w *io.Writer) *SparkLauncher {
-	return sl.redirectOutput(w)
-}
-
-func (sl *SparkLauncher) RedirectOutputToFile(file *os.File) *SparkLauncher {
-	w := io.MultiWriter(os.Stdout, file)
-	return sl.redirectOutput(&w)
-}
-
-func (sl *SparkLauncher) RedirectErrorToFile(file *os.File) *SparkLauncher {
-	w := io.MultiWriter(os.Stderr, file)
-	return sl.redirectOutput(&w)
+func (sl *SparkLauncher) RedirectOutput(file *os.File) {
+	sl.cmd.Stdout = file
 }
 
 func (sl *SparkLauncher) SetConf(k, v string) *SparkLauncher {
 	sl.conf[k] = v
-	return sl
-}
-
-func (sl *SparkLauncher) SetAppName(appName string) *SparkLauncher {
-	sl.appName = appName
-	return sl
-}
-
-func (sl *SparkLauncher) SetMaster(master string) *SparkLauncher {
-	sl.master = master
-	return sl
-}
-
-func (sl *SparkLauncher) SetDeployMode(deployMode string) *SparkLauncher {
-	sl.deployMode = deployMode
-	return sl
-}
-
-func (sl *SparkLauncher) SetAppResource(appResource string) *SparkLauncher {
-	sl.appResource = appResource
-	return sl
-}
-
-func (sl *SparkLauncher) SetMainClass(mainClass string) *SparkLauncher {
-	sl.mainClass = mainClass
 	return sl
 }
 
@@ -117,31 +84,22 @@ func (sl *SparkLauncher) AddSparkArgs(arg string) *SparkLauncher {
 	return sl
 }
 
-func (sl *SparkLauncher) AddJar(jar string) *SparkLauncher {
-	sl.jar = jar
-	return sl
-}
-
-func (sl *SparkLauncher) AddPyFile(file string) *SparkLauncher {
-	sl.pyFile = file
-	return sl
-}
-
-func (sl *SparkLauncher) SetVerbose(verbose bool) *SparkLauncher {
-	sl.verbose = verbose
-	return sl
-}
-
 func (sl *SparkLauncher) findSparkSubmit() string {
-	script := "spark-submit"
-	return path.Join(sl.sparkHome, "bin", script)
+	script := func() string {
+		scr := "spark-submit"
+		if runtime.GOOS == "windows" {
+			scr += ".cmd"
+		}
+
+		return scr
+	}()
+
+	return path.Join(sl.SparkHome, "bin", script)
 }
 
 func (sl *SparkLauncher) Launch() (*os.Process, error) {
 	var err error
-
-	// TODO: build proper shell command for spark-submit
-	sl.cmd = exec.Command(sl.findSparkSubmit())
+	
 	err = sl.cmd.Run()
 
 	return sl.cmd.Process, err
